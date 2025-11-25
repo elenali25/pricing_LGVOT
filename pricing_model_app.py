@@ -143,30 +143,6 @@ def get_fitted_curve_data(df, model, poly_features, label):
         '是否交税': label
     })
 
-def generate_tax_spread_table(_taxable_model, _taxable_poly, _taxfree_model, _taxfree_poly, max_term=30.0, step=0.25):
-    # ... (函数体保持不变) ...
-    if _taxable_model is None or _taxfree_model is None:
-        return pd.DataFrame()
-
-    terms = np.round(np.arange(0.0, max_term + step, step), 2)
-    
-    X_terms = terms.reshape(-1, 1)
-    
-    X_poly_tax = _taxable_poly.transform(X_terms)
-    taxable_yield = _taxable_model.predict(X_poly_tax)
-
-    X_poly_free = _taxfree_poly.transform(X_terms)
-    taxfree_yield = _taxfree_model.predict(X_poly_free)
-    
-    results = pd.DataFrame({
-        '剩余年限 (年)': terms,
-        '应税曲线收益率 (%)': taxable_yield,
-        '免税曲线收益率 (%)': taxfree_yield,
-    })
-    
-    results['税收利差 (BP)'] = (results['应税曲线收益率 (%)'] - results['免税曲线收益率 (%)']) * 100 
-    
-    return results
 
 
 # --- Streamlit 主应用函数 (核心修改区域) ---
@@ -236,7 +212,7 @@ def main_app():
             return taxfree_model.predict(X_poly)[0]
         return np.nan
         
-    st.subheader("1. 基准曲线拟合")
+    st.subheader("基准曲线拟合")
     
     # =================================================================
     # 【修复：新增曲线拟合图表可视化】
@@ -283,81 +259,24 @@ def main_app():
     # =================================================================
     
     # OLS 模型训练
-    st.subheader("2. 溢价模型 (OLS 利差回归)")
     spread_model = train_spread_regression_model(df_latest_for_model.copy(), get_base_yield)
     
     if spread_model is None:
         return 
 
-    # =================================================================
-    # 【修复：新增 OLS 结果展示表格】
-    # =================================================================
-    st.caption("OLS 回归结果概览 (利差预测)")
-    
-    # 提取回归结果，并转换为 BP (基点)
-    results_df = pd.DataFrame({
-        '系数 (BP)': spread_model.params * 10000,
-        '标准误差 (BP)': spread_model.bse * 10000,
-        'T 值': spread_model.tvalues,
-        'P 值 (P>|t|)': spread_model.pvalues,
-        # 提取 95% 置信区间
-        '95% 置信区间下限 (BP)': spread_model.conf_int()[0] * 10000,
-        '95% 置信区间上限 (BP)': spread_model.conf_int()[1] * 10000,
-    })
+    st.subheader("目标券合理收益率")
 
-    # 重新命名所有新的特征项，增加可读性
-    results_df.rename(index={
-        'const': '截距项 (A级基础利差)', 
-        '区域等级_B1': '区域等级_B1 (相对A级的溢价)',
-        '区域等级_B2': '区域等级_B2 (相对A级的溢价)',
-        '区域等级_B3': '区域等级_B3 (相对A级的溢价)',
-        '区域等级_C': '区域等级_C (相对A级的溢价)',
-        '余额_ln': 'ln(余额)',
-        'Is_Special': '专项债哑变量',
-        'Is_New': '新发行券哑变量',
-        'Is_Taxable': '是否交税哑变量',
-        'C_Spread': '票面利差主效应 (Coupon - Base_Yield)',
-        'C_Spread_Taxable_Int': '票面利差*应税交互项',
-    }, inplace=True)
-    
-    # 展示表格
-    st.dataframe(results_df.style.format({
-        '系数 (BP)': "{:.2f}",
-        '标准误差 (BP)': "{:.2f}",
-        'P 值 (P>|t|)': "{:.4f}",
-        '95% 置信区间下限 (BP)': "{:.2f}",
-        '95% 置信区间上限 (BP)': "{:.2f}",
-    }), use_container_width=True)
-    
-    # 单独展示 R^2
-    r2 = spread_model.rsquared * 100
-    st.markdown(f"**模型解释度 ($R^2$)**: **{r2:.2f}%**")
-
-    st.markdown("---")
-    # =================================================================
-
-    # --- 阶段三：交互式预测器 (保持不变) ---
-    st.subheader("3. 目标券合理收益率")
-    
-    # ... (此处省略，保持您原有的预测器逻辑不变) ...
-    # 1. 布局输入项 (分成两行)
     col_r1_1, col_r1_2, col_r1_3, _ = st.columns(4)
     col_r2_1, col_r2_2, col_r2_3, col_r2_4 = st.columns(4)
 
-    # **【核心步骤 2】提取唯一且已分类的省份名称**
-    # '区域_Clean' 列已在 apply_b_subgroups 中创建
     all_unique_provinces = sorted(df_latest_for_model['区域_Clean'].unique().tolist())
     
-    # **第一行输入项**
     min_term = df_latest_for_model['剩余年限'].min()
     max_term = df_latest_for_model['剩余年限'].max()
     target_term = col_r1_1.number_input("剩余年限 (年)", min_value=min_term, max_value=max_term, value=5.0, step=0.1, format='%.2f')
     target_tax = col_r1_2.selectbox("是否交税", options=['是', '否'])
-    
-    # **UI 变化：将区域等级替换为省份选择**
-    target_province_clean = col_r1_3.selectbox("目标省份", options=all_unique_provinces) 
+    target_province_clean = col_r1_3.selectbox("目标省份", options=all_unique_provinces)
 
-    # **第二行输入项**
     target_special = col_r2_1.selectbox("专项/一般类型", options=['一般', '专项'])
     target_balance_yi = col_r2_2.number_input("余额 (亿元)", min_value=0.01, value=10.0, step=0.1, format='%.2f')
     target_coupon = col_r2_3.number_input("票面利率 (%)", min_value=0.01, value=3.20, step=0.01, format='%.2f')
@@ -366,17 +285,10 @@ def main_app():
         col_r2_4.warning("余额必须大于 0 亿元。")
         return
 
-    # --- Prediction Logic Update ---
-
-    # **【核心步骤 3】查找目标省份的最终区域分类**
-    # 找到该省份在数据中的最终分类 (A, B1, B2, B3, C)
     target_row = df_latest_for_model[df_latest_for_model['区域_Clean'] == target_province_clean].iloc[0]
     target_region = target_row['区域等级']
-    
-    # Log the determined region for transparency
     st.caption(f"系统确定 **{target_province_clean}** 属于 **{target_region}** 区域等级进行预测。")
 
-    # 获取 OLS 参数 (保持不变)
     params = spread_model.params * 10000 
     gamma_0 = params.get('const', 0)
     gamma_B1 = params.get('区域等级_B1', 0) 
@@ -390,18 +302,15 @@ def main_app():
     gamma_C_Spread = params.get('C_Spread', 0)
     gamma_C_Spread_Int = params.get('C_Spread_Taxable_Int', 0)
 
-    # 1. 获取基准收益率 (YTM_Base) (保持不变)
     base_yield = get_base_yield(target_term, target_tax)
     
     if np.isnan(base_yield):
         col_r2_4.warning("无法计算基准收益率，请检查期限是否在样本范围内。")
         return
         
-    # 2. 计算各项利差组件 (转换为小数进行计算) (保持不变，但使用 target_region)
     spread_pred_decimal = 0.0
     spread_pred_decimal += gamma_0 / 10000 
 
-    # 区域等级逻辑
     if target_region == 'B1':
         spread_pred_decimal += gamma_B1 / 10000
     elif target_region == 'B2':
@@ -411,7 +320,6 @@ def main_app():
     elif target_region == 'C':
         spread_pred_decimal += gamma_C / 10000
         
-    # ... (其他利差计算逻辑保持不变) ...
     ln_balance = np.log(target_balance_yi)
     spread_pred_decimal += (gamma_ln_balance / 10000) * ln_balance
     
@@ -430,36 +338,90 @@ def main_app():
     if is_taxable == 1:
         spread_pred_decimal += (gamma_C_Spread_Int / 10000) * C_Spread
     
-    # 3. 计算最终预测收益率
     final_yield = base_yield + spread_pred_decimal
     
-    # 4. 展示结果
     col_r2_4.metric(
         "📈 合理收益率定价结果", 
         f"{final_yield:.4f}%",
         delta=f"基准收益率: {base_yield:.4f}%"
     )
-    
-    st.caption(f"""
-        **总预测利差**: {spread_pred_decimal * 10000:.2f} BP
+
+    st.subheader("溢价模型（OLS 利差回归）")
+    st.markdown("回归公式")
+    st.latex(r"""
+        \text{利差} = \gamma_0 + \gamma_{B1}\,\mathbb{1}_{B1} + \gamma_{B2}\,\mathbb{1}_{B2} + \gamma_{B3}\,\mathbb{1}_{B3} + \gamma_{C}\,\mathbb{1}_{C} + \gamma_{\ln \text{余额}}\cdot\ln(\text{余额}) + \gamma_{\text{专项}}\,\mathbb{1}_{\text{专项}} + \gamma_{\text{新券}}\,\mathbb{1}_{\text{新券}} + \gamma_{\text{应税}}\,\mathbb{1}_{\text{应税}} + \gamma_{\text{票面}}\cdot(\text{票面} - \text{基准收益率}) + \gamma_{\text{票面×应税}}\cdot\mathbb{1}_{\text{应税}}\cdot(\text{票面} - \text{基准收益率}) + \varepsilon
     """)
+    st.caption("OLS 回归结果概览")
+
+    results_df = pd.DataFrame({
+        '系数 (BP)': spread_model.params * 10000,
+        'P 值 (P>|t|)': spread_model.pvalues,
+    })
+
+    sig_marks = []
+    for p in results_df['P 值 (P>|t|)']:
+        if p < 0.01:
+            sig_marks.append('***')
+        elif p < 0.05:
+            sig_marks.append('**')
+        elif p < 0.1:
+            sig_marks.append('*')
+        else:
+            sig_marks.append('')
+    results_df['显著性'] = sig_marks
+
+    results_df.rename(index={
+        'const': '截距项 (A级基础利差)',
+        '区域等级_B1': '区域等级_B1 (相对A级的溢价)',
+        '区域等级_B2': '区域等级_B2 (相对A级的溢价)',
+        '区域等级_B3': '区域等级_B3 (相对A级的溢价)',
+        '区域等级_C': '区域等级_C (相对A级的溢价)',
+        '余额_ln': 'ln(余额)',
+        'Is_Special': '专项债哑变量',
+        'Is_New': '新发行券哑变量',
+        'Is_Taxable': '是否交税哑变量',
+        'C_Spread': '票面利差主效应 (Coupon - Base_Yield)',
+        'C_Spread_Taxable_Int': '票面利差*应税交互项',
+    }, inplace=True)
+
+    display_order = [
+        '截距项 (A级基础利差)',
+        '区域等级_B1 (相对A级的溢价)',
+        '区域等级_B2 (相对A级的溢价)',
+        '区域等级_B3 (相对A级的溢价)',
+        '区域等级_C (相对A级的溢价)',
+        'ln(余额)',
+        '专项债哑变量',
+        '新发行券哑变量',
+        '是否交税哑变量',
+        '票面利差主效应 (Coupon - Base_Yield)',
+        '票面利差*应税交互项',
+    ]
+    results_df = results_df.loc[[idx for idx in display_order if idx in results_df.index]]
+
+    st.dataframe(results_df.style.format({
+        '系数 (BP)': "{:.2f}",
+        'P 值 (P>|t|)': "{:.4f}",
+    }), use_container_width=True)
+
+    coef_plot_df = results_df.reset_index().rename(columns={'index': '变量'})
+    coef_chart = alt.Chart(coef_plot_df).mark_bar().encode(
+        x=alt.X('系数 (BP):Q', title='系数 (BP)'),
+        y=alt.Y('变量:N', sort='-x'),
+        color=alt.Color('显著性:N', scale=alt.Scale(domain=['***','**','*',''], range=['#2b8a3e','#4dabf7','#fab005','#adb5bd']))
+    )
+    st.altair_chart(coef_chart, use_container_width=True)
+    
+    # 单独展示 R^2
+    r2 = spread_model.rsquared * 100
+    st.markdown(f"**模型解释度 ($R^2$)**: **{r2:.2f}%**")
+
+    st.markdown("---")
+    # =================================================================
+
+    # --- 阶段三：交互式预测器 (保持不变) ---
 
     # --- 阶段四：税收利差曲线表格输出 (保持不变) ---
-    st.subheader("4. 双曲线估算税收利差 (BP)")
-    spread_df = generate_tax_spread_table(
-        taxable_model, taxable_poly, 
-        taxfree_model, taxfree_poly
-    )
-    
-    if not spread_df.empty:
-        st.dataframe(spread_df.style.format({
-            '剩余年限 (年)': "{:.2f}",
-            '应税曲线收益率 (%)': "{:.4f}",
-            '免税曲线收益率 (%)': "{:.4f}",
-            '税收利差 (BP)': "{:.2f}",
-        }), use_container_width=True, hide_index=True)
-    else:
-        st.warning("模型训练失败或数据不足，无法生成税收利差表格。")
 
 if __name__ == '__main__':
     main_app()
